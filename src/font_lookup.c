@@ -1,7 +1,17 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "font_lookup.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <fontconfig/fontconfig.h>
-#include "font_lookup.h"
+#include "openres.h"
 
 static FcConfig *config = NULL;
 
@@ -11,6 +21,9 @@ void initFontLookup(void) {
     exit(1);
   }
   config = FcInitLoadConfigAndFonts();
+  // TODO case-insensitive paths
+  FcConfigAppFontAddDir(config, (const FcChar8 *)"Fonts");
+  FcConfigAppFontAddDir(config, (const FcChar8 *)(RTP_PATH "/Fonts"));
 }
 
 void uninitFontLookup(void) {

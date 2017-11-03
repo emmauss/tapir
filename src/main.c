@@ -1,3 +1,12 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <ruby.h>
@@ -8,6 +17,8 @@
 #include "archive.h"
 #include "openres.h"
 #include "font_lookup.h"
+#include "ini.h"
+#include "tapir_config.h"
 #include "Audio.h"
 #include "Bitmap.h"
 #include "BitmapArray.h"
@@ -36,6 +47,8 @@ void Init_zlib(void);
 void Init_single_byte(void);
 void Init_utf_16_32(void);
 void Init_japanese_sjis(void);
+#elif RGSS == 2
+void Init_nkf(void);
 #endif
 static void Init_RGSS(void);
 static void tapir_atexit(void);
@@ -46,6 +59,8 @@ RUBY_GLOBAL_SETUP
 
 int main(int argc, char **argv) {
   atexit(tapir_atexit);
+
+  init_tapir_config();
 
   int ruby_argc = 2;
   char *ruby_argv_array[] = {
@@ -108,7 +123,15 @@ int main(int argc, char **argv) {
     fprintf(stderr, "warning: ignored console flag\n");
   }
 
-  initSDL();
+  struct ini *ini_data = load_ini("Game.ini", 0);
+  struct ini_section *game_section =
+    ini_data ? find_ini_section(ini_data, "Game") : NULL;
+  const char *game_title =
+    game_section ? find_ini_entry(game_section, "Title") : NULL;
+
+  if(!game_title) game_title = "tapir";
+
+  initSDL(game_title);
 
   initArchive();
 
@@ -134,6 +157,9 @@ int main(int argc, char **argv) {
     (void) ruby_argv;
     ruby_init();
     Init_zlib();
+#if RGSS == 2
+    Init_nkf();
+#endif
     Init_RGSS();
     {
       extern void Init_stack(void *addr);
@@ -143,6 +169,8 @@ int main(int argc, char **argv) {
   }
 #endif
 
+  if(ini_data) free_ini(ini_data);
+
   return state;
 }
 
@@ -150,6 +178,7 @@ static void tapir_atexit(void) {
   uninitFontLookup();
   deinitArchive();
   cleanupSDL();
+  deinit_tapir_config();
 }
 
 static void Init_RGSS(void) {

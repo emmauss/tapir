@@ -1,26 +1,22 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "Bitmap.h"
 #include <SDL.h>
 #include <SDL_image.h>
-#include "Bitmap.h"
 #include "RGSSError.h"
 #include "Color.h"
 #include "Rect.h"
 #include "Font.h"
 #include "openres.h"
 #include "misc.h"
-
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-#define RMASK 0xff000000
-#define GMASK 0x00ff0000
-#define BMASK 0x0000ff00
-#define AMASK 0x000000ff
-#define PIXELFORMAT_RGBA32 SDL_PIXELFORMAT_RGBA8888
-#else
-#define RMASK 0x000000ff
-#define GMASK 0x0000ff00
-#define BMASK 0x00ff0000
-#define AMASK 0xff000000
-#define PIXELFORMAT_RGBA32 SDL_PIXELFORMAT_ABGR8888
-#endif
+#include "sdl_misc.h"
 
 static void bitmap_mark(struct Bitmap *ptr);
 static void bitmap_free(struct Bitmap *ptr);
@@ -29,9 +25,7 @@ static VALUE bitmap_alloc(VALUE klass);
 VALUE rb_bitmap_new(int width, int height) {
   VALUE ret = bitmap_alloc(rb_cBitmap);
   struct Bitmap *ptr = rb_bitmap_data_mut(ret);
-  ptr->surface = SDL_CreateRGBSurface(
-      0, width, height, 32,
-      RMASK, GMASK, BMASK, AMASK);
+  ptr->surface = create_rgba_surface(width, height);
   if(!ptr->surface) {
     /* TODO: check error handling */
     rb_raise(rb_eRGSSError, "Could not create surface: %s", SDL_GetError());
@@ -46,6 +40,7 @@ static VALUE rb_bitmap_m_dispose(VALUE self);
 static VALUE rb_bitmap_m_disposed_p(VALUE self);
 static VALUE rb_bitmap_m_width(VALUE self);
 static VALUE rb_bitmap_m_height(VALUE self);
+static VALUE rb_bitmap_m_rect(VALUE self);
 static VALUE rb_bitmap_m_blt(int argc, VALUE *argv, VALUE self);
 static VALUE rb_bitmap_m_stretch_blt(int argc, VALUE *argv, VALUE self);
 static VALUE rb_bitmap_m_fill_rect(int argc, VALUE *argv, VALUE self);
@@ -58,6 +53,11 @@ static VALUE rb_bitmap_m_clear_rect(int argc, VALUE *argv, VALUE self);
 #endif
 static VALUE rb_bitmap_m_get_pixel(VALUE self, VALUE x, VALUE y);
 static VALUE rb_bitmap_m_set_pixel(VALUE self, VALUE x, VALUE y, VALUE color);
+static VALUE rb_bitmap_m_hue_change(VALUE self, VALUE hue);
+#if RGSS >= 2
+static VALUE rb_bitmap_m_blur(VALUE self);
+static VALUE rb_bitmap_m_radial_blur(VALUE self, VALUE angle, VALUE division);
+#endif
 static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self);
 static VALUE rb_bitmap_m_text_size(VALUE self, VALUE str);
 static VALUE rb_bitmap_m_font(VALUE self);
@@ -100,6 +100,7 @@ void Init_Bitmap(void) {
   rb_define_method(rb_cBitmap, "disposed?", rb_bitmap_m_disposed_p, 0);
   rb_define_method(rb_cBitmap, "width", rb_bitmap_m_width, 0);
   rb_define_method(rb_cBitmap, "height", rb_bitmap_m_height, 0);
+  rb_define_method(rb_cBitmap, "rect", rb_bitmap_m_rect, 0);
   rb_define_method(rb_cBitmap, "blt", rb_bitmap_m_blt, -1);
   rb_define_method(rb_cBitmap, "stretch_blt", rb_bitmap_m_stretch_blt, -1);
   rb_define_method(rb_cBitmap, "fill_rect", rb_bitmap_m_fill_rect, -1);
@@ -113,14 +114,15 @@ void Init_Bitmap(void) {
 #endif
   rb_define_method(rb_cBitmap, "get_pixel", rb_bitmap_m_get_pixel, 2);
   rb_define_method(rb_cBitmap, "set_pixel", rb_bitmap_m_set_pixel, 3);
+  rb_define_method(rb_cBitmap, "hue_change", rb_bitmap_m_hue_change, 1);
+#if RGSS >= 2
+  rb_define_method(rb_cBitmap, "blur", rb_bitmap_m_blur, 0);
+  rb_define_method(rb_cBitmap, "radial_blur", rb_bitmap_m_radial_blur, 2);
+#endif
   rb_define_method(rb_cBitmap, "draw_text", rb_bitmap_m_draw_text, -1);
   rb_define_method(rb_cBitmap, "text_size", rb_bitmap_m_text_size, 1);
   rb_define_method(rb_cBitmap, "font", rb_bitmap_m_font, 0);
   rb_define_method(rb_cBitmap, "font=", rb_bitmap_m_set_font, 1);
-  // TODO: implement Bitmap#rect
-  // TODO: implement Bitmap#hue_change
-  // TODO: implement Bitmap#blur
-  // TODO: implement Bitmap#radial_blur
 }
 
 bool rb_bitmap_data_p(VALUE obj) {
@@ -185,14 +187,9 @@ static VALUE rb_bitmap_m_initialize(int argc, VALUE *argv, VALUE self) {
       StringValue(argv[0]);
       Check_Type(argv[0], T_STRING);
 
-      SDL_RWops *file = NULL;
-      for(int i = 0; i < 4; ++i) {
-        const char * const extensions[] = {"", ".png", ".jpg", ".bmp"};
-        VALUE filename = rb_str_new(RSTRING_PTR(argv[0]), RSTRING_LEN(argv[0]));
-        rb_str_cat2(filename, extensions[i]);
-        file = openres(filename, true);
-        if(file) break;
-      }
+      const char * const extensions[] = {"", ".png", ".jpg", ".bmp", NULL};
+      VALUE filename = rb_str_new(RSTRING_PTR(argv[0]), RSTRING_LEN(argv[0]));
+      SDL_RWops *file = openres_ext(filename, true, extensions);
       if(!file) {
         /* TODO: check error handling */
         rb_raise(rb_eRGSSError, "Error loading %s: %s",
@@ -207,13 +204,10 @@ static VALUE rb_bitmap_m_initialize(int argc, VALUE *argv, VALUE self) {
             StringValueCStr(argv[0]),
             IMG_GetError());
       }
-      ptr->surface = SDL_ConvertSurfaceFormat(img, PIXELFORMAT_RGBA32, 0);
-      SDL_FreeSurface(img);
+      ptr->surface = create_rgba_surface_from(img);
       break;
     case 2:
-      ptr->surface = SDL_CreateRGBSurface(
-          0, NUM2INT(argv[0]), NUM2INT(argv[1]), 32,
-          RMASK, GMASK, BMASK, AMASK);
+      ptr->surface = create_rgba_surface(NUM2INT(argv[0]), NUM2INT(argv[1]));
       if(!ptr->surface) {
         /* TODO: check error handling */
         rb_raise(rb_eRGSSError, "Could not create surface: %s", SDL_GetError());
@@ -231,9 +225,8 @@ static VALUE rb_bitmap_m_initialize_copy(VALUE self, VALUE orig) {
   struct Bitmap *ptr = rb_bitmap_data_mut(self);
   const struct Bitmap *orig_ptr = rb_bitmap_data(orig);
   if(orig_ptr->surface) {
-    ptr->surface = SDL_CreateRGBSurface(
-        0, orig_ptr->surface->w, orig_ptr->surface->h, 32,
-        RMASK, GMASK, BMASK, AMASK);
+    ptr->surface = create_rgba_surface(
+        orig_ptr->surface->w, orig_ptr->surface->h);
     SDL_BlitSurface(orig_ptr->surface, NULL, ptr->surface, NULL);
   } else {
     ptr->surface = NULL;
@@ -274,6 +267,12 @@ static VALUE rb_bitmap_m_height(VALUE self) {
   const struct Bitmap *ptr = rb_bitmap_data(self);
   if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
   return INT2NUM(ptr->surface->h);
+}
+
+static VALUE rb_bitmap_m_rect(VALUE self) {
+  const struct Bitmap *ptr = rb_bitmap_data(self);
+  if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
+  return rb_rect_new(0, 0, ptr->surface->w, ptr->surface->h);
 }
 
 static void blt(
@@ -586,6 +585,29 @@ static VALUE rb_bitmap_m_set_pixel(VALUE self, VALUE x, VALUE y, VALUE color) {
   return Qnil;
 }
 
+static VALUE rb_bitmap_m_hue_change(VALUE self, VALUE hue) {
+  (void) self;
+  (void) hue;
+  WARN_UNIMPLEMENTED("Bitmap#hue_change");
+  return Qnil;
+}
+
+#if RGSS >= 2
+static VALUE rb_bitmap_m_blur(VALUE self) {
+  (void) self;
+  WARN_UNIMPLEMENTED("Bitmap#blur");
+  return Qnil;
+}
+
+static VALUE rb_bitmap_m_radial_blur(VALUE self, VALUE angle, VALUE division) {
+  (void) self;
+  (void) angle;
+  (void) division;
+  WARN_UNIMPLEMENTED("Bitmap#radial_blur");
+  return Qnil;
+}
+#endif
+
 static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self) {
   struct Bitmap *ptr = rb_bitmap_data_mut(self);
   if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
@@ -642,14 +664,23 @@ static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self) {
     fprintf(stderr, "cstr = %s\n", cstr);
     return Qnil;
   }
-  SDL_SetSurfaceBlendMode(fg_rendered, SDL_BLENDMODE_BLEND);
+
+  fg_rendered = create_rgba_surface_from(fg_rendered);
+
   int fg_width = fg_rendered->w;
   int fg_height = fg_rendered->h;
 
-  // TODO: implement scaling
-  rect.x += (rect.w - fg_width) * align / 2;
+  int fg_stretch_width;
+  if(rect.w < fg_width * 3 / 5) {
+    fg_stretch_width = fg_width * 3 / 5;
+  } else if(rect.w < fg_width) {
+    fg_stretch_width = rect.w;
+  } else {
+    fg_stretch_width = fg_width;
+  }
+  rect.x += (rect.w - fg_stretch_width) * align / 2;
   if(rect.h > fg_height) rect.y += (rect.h - fg_height) / 2;
-  rect.w = fg_width;
+  rect.w = fg_stretch_width;
   rect.h = fg_height;
 
 #if RGSS == 3
@@ -671,7 +702,8 @@ static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self) {
       SDL_FreeSurface(fg_rendered);
       return Qnil;
     }
-    SDL_SetSurfaceBlendMode(out_rendered, SDL_BLENDMODE_BLEND);
+    out_rendered = create_rgba_surface_from(out_rendered);
+
     int out_width = out_rendered->w;
     int out_height = out_rendered->h;
 
@@ -680,10 +712,12 @@ static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self) {
     // out_rect.y -= (out_height - rect.h) / 2;
     --out_rect.x;
     --out_rect.y;
-    out_rect.w = out_width;
+    out_rect.w += out_width - fg_width;
     out_rect.h = out_height;
 
-    SDL_BlitSurface(out_rendered, NULL, ptr->surface, &out_rect);
+    blt(ptr->surface, out_rendered,
+        out_rect.x, out_rect.y, out_rect.w, out_rect.h,
+        0, 0, out_width, out_height, font_out_color_ptr->alpha);
     SDL_FreeSurface(out_rendered);
 
     TTF_SetFontOutline(sdl_font, 0);
@@ -700,17 +734,22 @@ static VALUE rb_bitmap_m_draw_text(int argc, VALUE *argv, VALUE self) {
       SDL_FreeSurface(fg_rendered);
       return Qnil;
     }
-    SDL_SetSurfaceBlendMode(shadow_rendered, SDL_BLENDMODE_BLEND);
+    shadow_rendered = create_rgba_surface_from(shadow_rendered);
+
     SDL_Rect shadow_rect = rect;
     ++shadow_rect.x;
     ++shadow_rect.y;
 
-    SDL_BlitSurface(shadow_rendered, NULL, ptr->surface, &shadow_rect);
+    blt(ptr->surface, shadow_rendered,
+        shadow_rect.x, shadow_rect.y, shadow_rect.w, shadow_rect.h,
+        0, 0, fg_width, fg_height, font_color_ptr->alpha);
     SDL_FreeSurface(shadow_rendered);
   }
 #endif
 
-  SDL_BlitSurface(fg_rendered, NULL, ptr->surface, &rect);
+  blt(ptr->surface, fg_rendered,
+      rect.x, rect.y, rect.w, rect.h,
+      0, 0, fg_width, fg_height, font_color_ptr->alpha);
   SDL_FreeSurface(fg_rendered);
   return Qnil;
 }

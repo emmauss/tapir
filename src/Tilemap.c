@@ -1,6 +1,15 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "Tilemap.h"
 #include <SDL.h>
 #include "gl_misc.h"
-#include "Tilemap.h"
 #include "BitmapArray.h"
 #include "Bitmap.h"
 #include "Viewport.h"
@@ -642,6 +651,7 @@ static void renderTile(struct Tilemap *ptr, int tile_id, int x, int y,
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBlendEquation(GL_FUNC_ADD);
 
   glUseProgram(shader);
   glUniform1i(glGetUniformLocation(shader, "tex"), 0);

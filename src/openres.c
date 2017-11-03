@@ -1,21 +1,18 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "openres.h"
 #include <sys/types.h>
 #include <dirent.h>
-#include <ruby.h>
-#include "openres.h"
 #include "archive.h"
 #include "misc.h"
 #include "RGSSError.h"
-
-// TODO: Make RTP base path configurable
-// TODO: Make RTP name configurable (Game.ini)
-// TODO: Support multiple RTPs (Game.ini)
-#if RGSS == 3
-#define RTP_PATH "/usr/local/share/Enterbrain/RGSS3/RPGVXAce"
-#elif RGSS == 2
-#define RTP_PATH "/usr/local/share/Enterbrain/RGSS2/RPGVX"
-#else
-#define RTP_PATH "/usr/local/share/Enterbrain/RGSS/Standard"
-#endif
 
 static SDL_RWops *caseless_open(char *path, const char *mode);
 static void modify_case(char *path);
@@ -39,6 +36,20 @@ SDL_RWops *openres(VALUE path, bool use_archive) {
   rb_str_concat(path2, path);
   rb_str_update(path, 0, RSTRING_LEN(path), path2);
   return caseless_open(StringValueCStr(path), "rb");
+}
+
+SDL_RWops *openres_ext(VALUE path, bool use_archive,
+    const char * const exts[]) {
+  for(; *exts; ++exts) {
+    VALUE path2 = rb_str_new(RSTRING_PTR(path), RSTRING_LEN(path));
+    rb_str_cat2(path2, *exts);
+    SDL_RWops *file = openres(path2, use_archive);
+    if(file) {
+      rb_str_update(path, 0, RSTRING_LEN(path), path2);
+      return file;
+    }
+  }
+  return NULL;
 }
 
 VALUE rb_load_data(VALUE self, VALUE path) {

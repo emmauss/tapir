@@ -1,8 +1,17 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "misc.h"
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-#include "misc.h"
 
 int32_t saturateInt32(int32_t val, int32_t minval, int32_t maxval) {
   if(val <= minval) return minval;
@@ -16,7 +25,8 @@ double saturateDouble(double val, double minval, double maxval) {
   if(val <= minval) return minval;
   if(val >= maxval) return maxval;
   if(minval <= val && val <= maxval) return val;
-  rb_raise(rb_eRangeError, "cannot saturate NaN");
+  // rb_raise(rb_eRangeError, "cannot saturate NaN");
+  return 0.0;
 }
 
 union u64d_converter {

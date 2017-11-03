@@ -1,5 +1,14 @@
 # PROLOGUE
 
+# Copyright 2017 Masaki Hara. See the COPYRIGHT
+# file at the top-level directory of this distribution.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
 $stdout.reopen("stdout.txt", "w")
 $stderr.reopen("stderr.txt", "w")
 
@@ -130,7 +139,7 @@ module RGSSTest
 
   def assert_bitmap_equal(expected, actual, message = nil)
     comparison = compare_bitmap(expected, actual)
-    unless comparison < 1e-3
+    unless comparison < 0.01
       message = \
         "#{expected.inspect} != #{actual.inspect} " +
         "(difference: #{comparison})" if message.nil?
@@ -150,7 +159,7 @@ module RGSSTest
     end
     expected = Bitmap.new("#@@imgdir/#{name}.png")
     comparison = compare_bitmap(expected, actual)
-    unless comparison < 1e-3
+    unless comparison < 0.01
       save_bitmap(actual, "#{name}_actual.png") rescue nil
       save_bitmap(expected, "#{name}_expected.png") rescue nil
       message = \

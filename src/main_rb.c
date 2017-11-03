@@ -1,6 +1,15 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "main_rb.h"
 #include <stdbool.h>
 #include <ruby.h>
-#include "main_rb.h"
 #include "sdl_misc.h"
 #include "RGSSReset.h"
 
@@ -62,38 +71,6 @@ static void load_libs() {
       "  if !unimplemented_warnings[name]\n"
       "    unimplemented_warnings[name] = true\n"
       "    $stderr.puts \"unimplemented: #{name}\"\n"
-      "  end\n"
-      "end\n"
-      "class Module\n"
-      "  def attr_unimplemented(*names)\n"
-      "    names.each do|name|\n"
-      "      class_eval(\n"
-      "        \"def #{name}\\n\" +\n"
-      "        \"  warn_unimplemented(\\\"#{self}\\##{name}\\\")\\n\" +\n"
-      "        \"  @#{name}\\n\" +\n"
-      "        \"end\\n\" +\n"
-      "        \"def #{name}=(#{name})\\n\" +\n"
-      "        \"  warn_unimplemented(\\\"#{self}\\##{name}\\\")\\n\" +\n"
-      "        \"  @#{name} = #{name}\\n\" +\n"
-      "        \"end\\n\"\n"
-      "      )\n"
-      "    end\n"
-      "  end\n"
-      "end\n"
-      "module Audio\n"
-      "end\n"
-      "class Bitmap\n"
-      "  def blur\n"
-      "    warn_unimplemented(\"Bitmap#blur\")\n"
-      "  end\n"
-      "  def radial_blur(angle, division)\n"
-      "    warn_unimplemented(\"Bitmap#radial_blur\")\n"
-      "  end\n"
-      "  def hue_change(hue)\n"
-      "    warn_unimplemented(\"Bitmap#hue_change\")\n"
-      "  end\n"
-      "  def rect\n"
-      "    Rect.new(0, 0, width, height)\n"
       "  end\n"
       "end\n"
       "class Font\n"
@@ -173,29 +150,6 @@ static void load_libs() {
       "    @@default_out_color = default_out_color\n"
       "  end\n"
 #endif
-      "end\n"
-      "module Graphics\n"
-      "end\n"
-      "class Sprite\n"
-      "  def viewport\n"
-      "    nil\n"
-      "  end\n"
-      "  def flash(color, condition)\n"
-      "    warn_unimplemented(\"Sprite#flash\")\n"
-      "  end\n"
-      "  def update\n"
-      "    warn_unimplemented(\"Sprite#update\")\n"
-      "  end\n"
-      "end\n"
-      "class Viewport\n"
-      "  def flash(color, duration)\n"
-      "    warn_unimplemented(\"Viewport#flash\")\n"
-      "  end\n"
-      "  def update\n"
-      "    warn_unimplemented(\"Viewport#update\")\n"
-      "  end\n"
-      "end\n"
-      "class Window\n"
       "end\n"
       "\n"
       "module RPG\n"
@@ -1401,7 +1355,6 @@ static void load_libs() {
       "    attr_accessor :actor_collapse_se, :battle_start_se, :battle_transition, :battleback_name, :buzzer_se, :cancel_se, :cursor_se, :decision_se, :enemy_collapse_se, :equip_se, :escape_se, :gameover_name, :load_se, :magic_number, :save_se, :shop_se, :title_name, :windowskin_name, :words\n"
 #endif
       "    def initialize\n"
-      "      warn_unimplemented(\"RPG::System.new\")\n"
 #if RGSS == 3
       "      @airship = RPG::System::Vehicle.new\n"
       "      @armor_types = [nil, \"\"]\n"
@@ -1906,11 +1859,8 @@ static void load_libs() {
 #if RGSS == 3
       "module DL\n"
       "end\n"
-#elif RGSS == 2
-      "module NKF\n"
-      "end\n"
-#else
-      "class Hangup\n"
+#elif RGSS == 1
+      "class Hangup < Exception\n"
       "end\n"
 #endif
       "\n"

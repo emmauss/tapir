@@ -1,6 +1,15 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "Window.h"
 #include <SDL.h>
 #include "gl_misc.h"
-#include "Window.h"
 #include "Bitmap.h"
 #include "Viewport.h"
 #include "Rect.h"
@@ -696,6 +705,7 @@ static void renderWindow(
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBlendEquation(GL_FUNC_ADD);
 
   if(ptr->windowskin != Qnil && job->aux[0] == 0) {
     const struct Bitmap *skin_bitmap_ptr = rb_bitmap_data(ptr->windowskin);
@@ -790,6 +800,49 @@ static void renderWindow(
   int padding_bottom = 16;
 #endif
 
+  const struct Rect *cursor_rect_ptr = rb_rect_data(ptr->cursor_rect);
+
+  if(ptr->windowskin != Qnil && openness == 255 &&
+      job->aux[0] == content_job_no &&
+      cursor_rect_ptr->width > 0 && cursor_rect_ptr->height > 0) {
+    const struct Bitmap *skin_bitmap_ptr = rb_bitmap_data(ptr->windowskin);
+    SDL_Surface *skin_surface = skin_bitmap_ptr->surface;
+    if(!skin_surface) return;
+
+    glActiveTexture(GL_TEXTURE0);
+    bitmapBindTexture((struct Bitmap *)skin_bitmap_ptr);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // TODO: clipping?
+#if RGSS == 3
+    int adjusted_x = ptr->x + cursor_rect_ptr->x + padding - ptr->ox;
+    int adjusted_y = ptr->y + cursor_rect_ptr->y + padding - ptr->oy;
+#else
+    int adjusted_x = ptr->x + cursor_rect_ptr->x + padding;
+    int adjusted_y = ptr->y + cursor_rect_ptr->y + padding;
+#endif
+
+    glUseProgram(cursor_shader);
+    glUniform1i(glGetUniformLocation(cursor_shader, "windowskin"), 0);
+    glUniform2f(glGetUniformLocation(cursor_shader, "resolution"),
+        viewport->width, viewport->height);
+    glUniform1f(glGetUniformLocation(cursor_shader, "opacity"),
+        ptr->contents_opacity / 255.0);
+    glUniform2f(glGetUniformLocation(cursor_shader, "cursor_size"),
+        cursor_rect_ptr->width, cursor_rect_ptr->height);
+
+    gl_draw_rect(
+        -viewport->ox + adjusted_x,
+        -viewport->oy + adjusted_y,
+        -viewport->ox + adjusted_x + cursor_rect_ptr->width,
+        -viewport->oy + adjusted_y + cursor_rect_ptr->height,
+        0.0, 0.0, cursor_rect_ptr->width, cursor_rect_ptr->height);
+  }
+
   if(ptr->contents != Qnil && openness == 255 &&
       job->aux[0] == content_job_no) {
     const struct Bitmap *contents_bitmap_ptr = rb_bitmap_data(ptr->contents);
@@ -833,49 +886,6 @@ static void renderWindow(
         (double)clip_top / content_height,
         (double)clip_right / content_width,
         (double)clip_bottom / content_height);
-  }
-
-  const struct Rect *cursor_rect_ptr = rb_rect_data(ptr->cursor_rect);
-
-  if(ptr->windowskin != Qnil && openness == 255 &&
-      job->aux[0] == content_job_no &&
-      cursor_rect_ptr->width > 0 && cursor_rect_ptr->height > 0) {
-    const struct Bitmap *skin_bitmap_ptr = rb_bitmap_data(ptr->windowskin);
-    SDL_Surface *skin_surface = skin_bitmap_ptr->surface;
-    if(!skin_surface) return;
-
-    glActiveTexture(GL_TEXTURE0);
-    bitmapBindTexture((struct Bitmap *)skin_bitmap_ptr);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // TODO: clipping?
-#if RGSS == 3
-    int adjusted_x = ptr->x + cursor_rect_ptr->x + padding - ptr->ox;
-    int adjusted_y = ptr->y + cursor_rect_ptr->y + padding - ptr->oy;
-#else
-    int adjusted_x = ptr->x + cursor_rect_ptr->x + padding;
-    int adjusted_y = ptr->y + cursor_rect_ptr->y + padding;
-#endif
-
-    glUseProgram(cursor_shader);
-    glUniform1i(glGetUniformLocation(cursor_shader, "windowskin"), 0);
-    glUniform2f(glGetUniformLocation(cursor_shader, "resolution"),
-        viewport->width, viewport->height);
-    glUniform1f(glGetUniformLocation(cursor_shader, "opacity"),
-        ptr->contents_opacity / 255.0);
-    glUniform2f(glGetUniformLocation(cursor_shader, "cursor_size"),
-        cursor_rect_ptr->width, cursor_rect_ptr->height);
-
-    gl_draw_rect(
-        -viewport->ox + adjusted_x,
-        -viewport->oy + adjusted_y,
-        -viewport->ox + adjusted_x + cursor_rect_ptr->width,
-        -viewport->ox + adjusted_y + cursor_rect_ptr->height,
-        0.0, 0.0, cursor_rect_ptr->width, cursor_rect_ptr->height);
   }
 
   glUseProgram(0);

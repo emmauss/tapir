@@ -1,6 +1,16 @@
+// Copyright 2017 Masaki Hara. See the COPYRIGHT
+// file at the top-level directory of this distribution.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+#include "Sprite.h"
+#include <math.h>
 #include <SDL.h>
 #include "gl_misc.h"
-#include "Sprite.h"
 #include "Bitmap.h"
 #include "Viewport.h"
 #include "Rect.h"
@@ -19,6 +29,8 @@ static VALUE rb_sprite_m_initialize_copy(VALUE self, VALUE orig);
 
 static VALUE rb_sprite_m_dispose(VALUE self);
 static VALUE rb_sprite_m_disposed_p(VALUE self);
+static VALUE rb_sprite_m_flash(VALUE self, VALUE color, VALUE duration);
+static VALUE rb_sprite_m_update(VALUE self);
 static VALUE rb_sprite_m_bitmap(VALUE self);
 static VALUE rb_sprite_m_set_bitmap(VALUE self, VALUE bitmap);
 #if RGSS >= 2
@@ -27,8 +39,8 @@ static VALUE rb_sprite_m_height(VALUE self);
 #endif
 static VALUE rb_sprite_m_src_rect(VALUE self);
 static VALUE rb_sprite_m_set_src_rect(VALUE self, VALUE newval);
-#if RGSS >= 2
 static VALUE rb_sprite_m_viewport(VALUE self);
+#if RGSS >= 2
 static VALUE rb_sprite_m_set_viewport(VALUE self, VALUE newval);
 #endif
 static VALUE rb_sprite_m_visible(VALUE self);
@@ -95,6 +107,8 @@ void Init_Sprite(void) {
       rb_sprite_m_initialize_copy, 1);
   rb_define_method(rb_cSprite, "dispose", rb_sprite_m_dispose, 0);
   rb_define_method(rb_cSprite, "disposed?", rb_sprite_m_disposed_p, 0);
+  rb_define_method(rb_cSprite, "flash", rb_sprite_m_flash, 2);
+  rb_define_method(rb_cSprite, "update", rb_sprite_m_update, 0);
 #if RGSS >= 2
   rb_define_method(rb_cSprite, "width", rb_sprite_m_width, 0);
   rb_define_method(rb_cSprite, "height", rb_sprite_m_height, 0);
@@ -103,8 +117,8 @@ void Init_Sprite(void) {
   rb_define_method(rb_cSprite, "bitmap=", rb_sprite_m_set_bitmap, 1);
   rb_define_method(rb_cSprite, "src_rect", rb_sprite_m_src_rect, 0);
   rb_define_method(rb_cSprite, "src_rect=", rb_sprite_m_set_src_rect, 1);
-#if RGSS >= 2
   rb_define_method(rb_cSprite, "viewport", rb_sprite_m_viewport, 0);
+#if RGSS >= 2
   rb_define_method(rb_cSprite, "viewport=", rb_sprite_m_set_viewport, 1);
 #endif
   rb_define_method(rb_cSprite, "visible", rb_sprite_m_visible, 0);
@@ -152,8 +166,6 @@ void Init_Sprite(void) {
   rb_define_method(rb_cSprite, "color=", rb_sprite_m_set_color, 1);
   rb_define_method(rb_cSprite, "tone", rb_sprite_m_tone, 0);
   rb_define_method(rb_cSprite, "tone=", rb_sprite_m_set_tone, 1);
-  // TODO: implement Sprite#flash
-  // TODO: implement Sprite#update
 }
 
 bool rb_sprite_data_p(VALUE obj) {
@@ -186,6 +198,7 @@ static void sprite_mark(struct Sprite *ptr) {
   rb_gc_mark(ptr->src_rect);
   rb_gc_mark(ptr->color);
   rb_gc_mark(ptr->tone);
+  rb_gc_mark(ptr->flash_color);
 }
 
 static void sprite_free(struct Sprite *ptr) {
@@ -226,10 +239,14 @@ static VALUE sprite_alloc(VALUE klass) {
   ptr->blend_type = 0;
   ptr->color = Qnil;
   ptr->tone = Qnil;
+  ptr->flash_color = Qnil;
+  ptr->flash_duration = 0;
+  ptr->flash_count = 0;
   VALUE ret = Data_Wrap_Struct(klass, sprite_mark, sprite_free, ptr);
   ptr->src_rect = rb_rect_new2();
   ptr->color = rb_color_new2();
   ptr->tone = rb_tone_new2();
+  ptr->flash_color = rb_color_new2();
   registerRenderable(&ptr->renderable);
   return ret;
 }
@@ -288,6 +305,9 @@ static VALUE rb_sprite_m_initialize_copy(VALUE self, VALUE orig) {
 #if RGSS >= 2
   ptr->wave_phase = orig_ptr->wave_phase;
 #endif
+  rb_color_set2(ptr->flash_color, orig_ptr->flash_color);
+  ptr->flash_duration = orig_ptr->flash_duration;
+  ptr->flash_count = orig_ptr->flash_count;
   return Qnil;
 }
 
@@ -302,6 +322,27 @@ static VALUE rb_sprite_m_disposed_p(VALUE self) {
   return ptr->renderable.disposed ? Qtrue : Qfalse;
 }
 
+static VALUE rb_sprite_m_flash(VALUE self, VALUE color, VALUE duration) {
+  struct Sprite *ptr = rb_sprite_data_mut(self);
+  rb_color_set2(ptr->flash_color, color);
+  ptr->flash_duration = NUM2INT(duration);
+  ptr->flash_count = 0;
+  return Qnil;
+}
+
+static VALUE rb_sprite_m_update(VALUE self) {
+  struct Sprite *ptr = rb_sprite_data_mut(self);
+#if RGSS >= 2
+  ptr->wave_phase += (double)ptr->wave_speed / ptr->wave_length;
+#endif
+  ++ptr->flash_count;
+  if(ptr->flash_count >= ptr->flash_duration) {
+    ptr->flash_count = 0;
+    ptr->flash_duration = 0;
+  }
+  return Qnil;
+}
+
 static VALUE rb_sprite_m_bitmap(VALUE self) {
   const struct Sprite *ptr = rb_sprite_data(self);
   return ptr->bitmap;
@@ -309,9 +350,13 @@ static VALUE rb_sprite_m_bitmap(VALUE self) {
 
 static VALUE rb_sprite_m_set_bitmap(VALUE self, VALUE newval) {
   struct Sprite *ptr = rb_sprite_data_mut(self);
-  if(newval != Qnil) rb_bitmap_data(newval);
+  const struct Bitmap *bitmap_ptr;
+  if(newval != Qnil) bitmap_ptr = rb_bitmap_data(newval);
+  if(ptr->bitmap == newval) return newval;
   ptr->bitmap = newval;
-  if(newval != Qnil) rb_rect_set2(ptr->src_rect, rb_bitmap_rect(newval));
+  if(newval != Qnil && bitmap_ptr->surface) {
+    rb_rect_set2(ptr->src_rect, rb_bitmap_rect(newval));
+  }
   return newval;
 }
 
@@ -338,12 +383,12 @@ static VALUE rb_sprite_m_set_src_rect(VALUE self, VALUE newval) {
   return newval;
 }
 
-#if RGSS >= 2
 static VALUE rb_sprite_m_viewport(VALUE self) {
   const struct Sprite *ptr = rb_sprite_data(self);
   return ptr->viewport;
 }
 
+#if RGSS >= 2
 static VALUE rb_sprite_m_set_viewport(VALUE self, VALUE newval) {
   struct Sprite *ptr = rb_sprite_data_mut(self);
   if(newval != Qnil) rb_viewport_data(newval);
@@ -597,13 +642,15 @@ static void renderSprite(
   struct Sprite *ptr = (struct Sprite *)renderable;
 
   const struct Color *color_ptr = rb_color_data(ptr->color);
+  const struct Color *flash_color_ptr = rb_color_data(ptr->flash_color);
+  double flash_opacity =
+    ptr->flash_duration <= 0 ? 0.0 :
+    1.0 - (double)ptr->flash_count / ptr->flash_duration;
   const struct Tone *tone_ptr = rb_tone_data(ptr->tone);
 #if RGSS >= 2
   if(ptr->wave_amp) WARN_UNIMPLEMENTED("Sprite#wave_amp");
 #endif
   if(ptr->bush_depth) WARN_UNIMPLEMENTED("Sprite#bush_depth");
-  if(ptr->blend_type) WARN_UNIMPLEMENTED("Sprite#blend_type");
-  if(ptr->angle != 0.0) WARN_UNIMPLEMENTED("Sprite#angle");
   if(ptr->bitmap == Qnil) return;
   const struct Bitmap *bitmap_ptr = rb_bitmap_data(ptr->bitmap);
   SDL_Surface *surface = bitmap_ptr->surface;
@@ -611,7 +658,20 @@ static void renderSprite(
   const struct Rect *src_rect = rb_rect_data(ptr->src_rect);
 
   glEnable(GL_BLEND);
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  if(ptr->blend_type == 1) {
+    glBlendFuncSeparate(
+        GL_ONE, GL_ONE,
+        GL_ZERO, GL_ONE);
+    glBlendEquation(GL_FUNC_ADD);
+  } else if(ptr->blend_type == 2) {
+    glBlendFuncSeparate(
+        GL_ONE, GL_ONE,
+        GL_ZERO, GL_ONE);
+    glBlendEquationSeparate(GL_FUNC_REVERSE_SUBTRACT, GL_FUNC_ADD);
+  } else {
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendEquation(GL_FUNC_ADD);
+  }
 
   int src_left = src_rect->x;
   int src_top = src_rect->y;
@@ -621,6 +681,17 @@ static void renderSprite(
   if(src_top < 0) src_top = 0;
   if(src_right > surface->w) src_right = surface->w;
   if(src_bottom > surface->h) src_bottom = surface->h;
+
+  double angle_rad = ptr->angle * (3.1415926535897932384 / 180.0);
+  double angle_cos = cos(angle_rad);
+  double angle_sin = sin(angle_rad);
+  double zoom_x_inv = 1.0 / ptr->zoom_x;
+  double zoom_y_inv = 1.0 / ptr->zoom_y;
+
+  GLfloat zoom_angle[4] = {
+    zoom_x_inv * angle_cos, zoom_x_inv * -angle_sin,
+    zoom_y_inv * angle_sin, zoom_y_inv * angle_cos
+  };
 
   glUseProgram(shader);
   glUniform1i(glGetUniformLocation(shader, "tex"), 0);
@@ -636,16 +707,24 @@ static void renderSprite(
       ptr->x, ptr->y);
   glUniform2f(glGetUniformLocation(shader, "src_translate"),
       ptr->ox + src_rect->x, ptr->oy + src_rect->y);
-  glUniform2f(glGetUniformLocation(shader, "zoom"),
-      ptr->zoom_x, ptr->zoom_y);
+  glUniformMatrix2fv(glGetUniformLocation(shader, "zoom_angle"),
+      1, true, zoom_angle);
   glUniform1i(glGetUniformLocation(shader, "mirror"), ptr->mirror);
   glUniform1f(glGetUniformLocation(shader, "opacity"),
       ptr->opacity / 255.0);
-  glUniform4f(glGetUniformLocation(shader, "sprite_color"),
-      color_ptr->red / 255.0,
-      color_ptr->green / 255.0,
-      color_ptr->blue / 255.0,
-      color_ptr->alpha / 255.0);
+  if(flash_color_ptr->alpha * flash_opacity > color_ptr->alpha) {
+    glUniform4f(glGetUniformLocation(shader, "sprite_color"),
+        flash_color_ptr->red / 255.0,
+        flash_color_ptr->green / 255.0,
+        flash_color_ptr->blue / 255.0,
+        flash_color_ptr->alpha / 255.0 * flash_opacity);
+  } else {
+    glUniform4f(glGetUniformLocation(shader, "sprite_color"),
+        color_ptr->red / 255.0,
+        color_ptr->green / 255.0,
+        color_ptr->blue / 255.0,
+        color_ptr->alpha / 255.0);
+  }
   glUniform4f(glGetUniformLocation(shader, "sprite_tone"),
       tone_ptr->red / 255.0,
       tone_ptr->green / 255.0,
@@ -697,10 +776,9 @@ void initSpriteSDL() {
     "uniform vec2 src_topleft;\n"
     "uniform vec2 src_bottomright;\n"
     "uniform vec2 src_size;\n"
-    "uniform vec2 zoom;\n"
+    "uniform mat2 zoom_angle;\n"
     "uniform bool mirror;\n"
     "uniform float opacity;\n"
-    // "uniform float angle;\n"
     "uniform vec4 sprite_color;\n"
     "uniform vec4 sprite_tone;\n"
     "\n"
@@ -708,7 +786,7 @@ void initSpriteSDL() {
     "    vec4 color;\n"
     "    vec2 coord = gl_TexCoord[0].xy;\n"
     "    coord = coord - dst_translate;\n"
-    "    coord = vec2(coord.x / zoom.x, coord.y / zoom.y);\n"
+    "    coord = zoom_angle * coord;\n"
     "    coord = coord + src_translate;\n"
     "    if(src_topleft.x <= coord.x && src_topleft.y <= coord.y && coord.x <= src_bottomright.x && coord.y <= src_bottomright.y) {\n"
     "      if(mirror) {\n"
