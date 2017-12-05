@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
 #include <iconv.h>
 
 // 932 is the default code page for Japanese Windows environment.
@@ -145,6 +144,66 @@ struct ini *load_ini(const char *filename, int codepage) {
   return data;
 }
 
+bool save_ini(struct ini *data, const char *filename, int codepage) {
+  if(codepage == 0) {
+    codepage = ansi_code_page;
+  }
+
+  size_t buflen = 0;
+  for(size_t i = 0; i < data->size; ++i) {
+    struct ini_section *section = data->sections[i];
+    if(i > 0 || strcmp(section->name, "")) {
+      buflen += 4 + strlen(section->name); // [section]\r\n
+    }
+    for(size_t j = 0; j < section->size; ++j) {
+      struct ini_entry entry = section->entries[j];
+      // key=value\r\n
+      buflen += 3 + strlen(entry.key) + strlen(entry.value);
+    }
+  }
+
+  struct buffer buf_before_encoding = {
+    buflen, buflen, malloc(buflen)
+  };
+
+  char *cur = buf_before_encoding.buf;
+  for(size_t i = 0; i < data->size; ++i) {
+    struct ini_section *section = data->sections[i];
+    if(i > 0 || strcmp(section->name, "")) {
+      size_t namelen = strlen(section->name);
+      *cur++ = '[';
+      memcpy(cur, section->name, namelen);
+      cur += namelen;
+      *cur++ = ']';
+      *cur++ = '\r';
+      *cur++ = '\n';
+    }
+    for(size_t j = 0; j < section->size; ++j) {
+      struct ini_entry entry = section->entries[j];
+      size_t keylen = strlen(entry.key);
+      size_t valuelen = strlen(entry.value);
+      memcpy(cur, entry.key, keylen);
+      cur += keylen;
+      *cur++ = '=';
+      memcpy(cur, entry.value, valuelen);
+      cur += valuelen;
+      *cur++ = '\r';
+      *cur++ = '\n';
+    }
+  }
+
+  struct buffer buf = convert_all(buf_before_encoding, "cp932", "utf-8");
+  free(buf_before_encoding.buf);
+
+  FILE *f = fopen(filename, "wb");
+  if(!f) return false;
+  size_t numwritten = fwrite(buf.buf, 1, buf.size, f);
+  fclose(f);
+  free(buf.buf);
+
+  return numwritten == buf.size;
+}
+
 struct ini_section *new_ini_section(const char *name) {
   struct ini_section *section = malloc(sizeof(*section));
   section->name = malloc(strlen(name) + 1);
@@ -179,6 +238,18 @@ void add_ini_entry(
   section->entries[section->size].key = new_key;
   section->entries[section->size].value = new_value;
   section->size++;
+}
+
+void set_ini_entry(
+    struct ini_section *section, const char *key, const char *value) {
+  for(size_t i = 0; i < section->size; ++i) {
+    if(!strcmp(section->entries[i].key, key)) {
+      free(section->entries[i].value);
+      section->entries[i].value = strdup(value);
+      return;
+    }
+  }
+  add_ini_entry(section, key, value);
 }
 
 const char *find_ini_entry(struct ini_section *section, const char *key) {
@@ -222,4 +293,13 @@ struct ini_section *find_ini_section(struct ini *data, const char *name) {
     }
   }
   return NULL;
+}
+
+struct ini_section *find_ini_section_or_insert(
+    struct ini *data, const char *name) {
+  struct ini_section *section = find_ini_section(data, name);
+  if(section) return section;
+  section = new_ini_section(name);
+  add_ini_section(data, section);
+  return section;
 }

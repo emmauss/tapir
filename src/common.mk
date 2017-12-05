@@ -11,14 +11,13 @@ RUBY_PLATFORM := $(shell $(RUBY_DIR)/bin/ruby -e 'print RUBY_PLATFORM')
 
 bin_PROGRAMS = $(EXEC)
 tapir_SOURCES = main.c main_rb.c archive.c openres.c gl_misc.c sdl_misc.c \
-		misc.c font_lookup.c ini.c tapir_config.c \
+		surface_misc.c misc.c font_lookup.c ini.c tapir_config.c \
 		Bitmap.c BitmapArray.c \
 		Audio.c Color.c Font.c Graphics.c Input.c Plane.c \
 		RGSSError.c RGSSReset.c Rect.c Sprite.c Table.c Tilemap.c \
 		Tone.c Viewport.c Win32APIFake.c Window.c
 
-CFLAGS += $(SDL_CFLAGS) $(GL_CFLAGS) $(FONTCONFIG_CFLAGS) $(LIBCONFIG_CFLAGS) \
-	  -DDATA_DIR='"$(datadir)"'
+CFLAGS += $(SDL_CFLAGS) $(GL_CFLAGS) $(FONTCONFIG_CFLAGS) $(LIBCONFIG_CFLAGS)
 LDFLAGS += -L$(RUBY_DIR)/lib
 LIBS += $(RUBY_SRC_DIR)/ext/zlib/zlib.a -lz \
 	-lruby-static -lpthread -lrt -ldl -lcrypt -lm \
@@ -34,7 +33,7 @@ clean-local:
 
 test: all
 	mkdir -p test
-	cd test; ruby ../../src/test/test.rb $(RGSS) ../../bin/$(EXEC)
+	cd test; ruby ../../src/test/test.rb tapir $(RGSS) ../../bin/$(EXEC)
 
 .PHONY: test
 

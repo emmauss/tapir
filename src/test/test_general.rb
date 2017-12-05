@@ -8,9 +8,7 @@
 # except according to those terms.
 
 module RGSSTest
-  class TestGeneral
-    include RGSSTest
-
+  class TestGeneral < Test
     def test_global_variables
       if RGSSTest::RGSS == 3
         assert_symset_equal(global_variables, [
@@ -96,13 +94,20 @@ module RGSSTest
       end
     end
 
+    if RGSS == 3
     def test_transcode
-      RGSSTest::RGSS == 3 or return
       assert_equal(
         "ほげ".encode("Shift_JIS"),
         "\x82\xD9\x82\xB0".force_encoding("Shift_JIS"))
     end
-  end
+    end # if RGSS == 3
 
-  run_test(TestGeneral)
+    def test_regex
+      assert_nothing_raised(RegexpError) { Regexp.compile('\\s*+\\s*') }
+    end
+
+    def test_load_data_noent
+      assert_raise(Errno::ENOENT) { load_data("Data/nonexistent.dat") }
+    end
+  end
 end

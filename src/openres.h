@@ -13,21 +13,25 @@
 #include <stdbool.h>
 #include <SDL.h>
 #include <ruby.h>
+#include "ini.h"
 
-// TODO: Make RTP base path configurable
-// TODO: Make RTP name configurable (Game.ini)
-// TODO: Support multiple RTPs (Game.ini)
-#if RGSS == 3
-#define RTP_PATH DATA_DIR "/Enterbrain/RGSS3/RPGVXAce"
-#elif RGSS == 2
-#define RTP_PATH DATA_DIR "/Enterbrain/RGSS2/RPGVX"
+#if RGSS >= 2
+#define NUM_RTP_SLOTS 1
 #else
-#define RTP_PATH DATA_DIR "/Enterbrain/RGSS/Standard"
+#define NUM_RTP_SLOTS 3
 #endif
+
+const char *get_rtp_path(int rtp_slot);
+void configure_rtp_path(struct ini_section *game_section);
+void deconfigure_rtp_path(void);
 
 SDL_RWops *openres(VALUE path, bool use_archive);
 SDL_RWops *openres_ext(VALUE path, bool use_archive,
     const char * const exts[]);
+// TODO: this is a dirty hack -- only the first call of `rb_load_data`
+//       after this function is considered "script loading", that means
+//       it will only look into the archive provided it exists.
+void flag_script_loading(void);
 VALUE rb_load_data(VALUE self, VALUE path);
 
 #endif /* OPENRES_H */

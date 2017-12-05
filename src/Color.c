@@ -16,10 +16,11 @@ static VALUE color_alloc(VALUE klass);
 VALUE rb_color_new(double red, double green, double blue, double alpha) {
   VALUE ret = color_alloc(rb_cColor);
   struct Color *ptr = rb_color_data_mut(ret);
-  // Note: original RGSS wrongly saturates RGB within [-255, 255].
-  ptr->red = saturateDouble(red, 0.0, 255.0);
-  ptr->green = saturateDouble(green, 0.0, 255.0);
-  ptr->blue = saturateDouble(blue, 0.0, 255.0);
+  // Note: RGB values are expected to be clamped within [0, 255].
+  // but original RGSS wrongly uses [-255, 255].
+  ptr->red = saturateDouble(red, -255.0, 255.0);
+  ptr->green = saturateDouble(green, -255.0, 255.0);
+  ptr->blue = saturateDouble(blue, -255.0, 255.0);
   ptr->alpha = saturateDouble(alpha, 0.0, 255.0);
   return ret;
 }
@@ -41,21 +42,25 @@ void rb_color_set(
     VALUE self, double newred, double newgreen, double newblue,
     double newalpha) {
   struct Color *ptr = rb_color_data_mut(self);
-  // Note: original RGSS wrongly saturates RGB within [-255, 255].
-  ptr->red = saturateDouble(newred, 0.0, 255.0);
-  ptr->green = saturateDouble(newgreen, 0.0, 255.0);
-  ptr->blue = saturateDouble(newblue, 0.0, 255.0);
+  // Note: RGB values are expected to be clamped within [0, 255].
+  // but original RGSS wrongly uses [-255, 255].
+  ptr->red = saturateDouble(newred, -255.0, 255.0);
+  ptr->green = saturateDouble(newgreen, -255.0, 255.0);
+  ptr->blue = saturateDouble(newblue, -255.0, 255.0);
   ptr->alpha = saturateDouble(newalpha, 0.0, 255.0);
 }
 
 void rb_color_set2(VALUE self, VALUE other) {
   struct Color *ptr = rb_color_data_mut(self);
   const struct Color *other_ptr = rb_color_data(other);
-  // Note: original RGSS doesn't check saturation here.
-  ptr->red = saturateDouble(other_ptr->red, 0.0, 255.0);
-  ptr->green = saturateDouble(other_ptr->green, 0.0, 255.0);
-  ptr->blue = saturateDouble(other_ptr->blue, 0.0, 255.0);
-  ptr->alpha = saturateDouble(other_ptr->alpha, 0.0, 255.0);
+  ptr->red = other_ptr->red;
+  ptr->green = other_ptr->green;
+  ptr->blue = other_ptr->blue;
+  ptr->alpha = other_ptr->alpha;
+  // ptr->red = saturateDouble(other_ptr->red, 0.0, 255.0);
+  // ptr->green = saturateDouble(other_ptr->green, 0.0, 255.0);
+  // ptr->blue = saturateDouble(other_ptr->blue, 0.0, 255.0);
+  // ptr->alpha = saturateDouble(other_ptr->alpha, 0.0, 255.0);
 }
 
 double rb_color_red(VALUE self) {
@@ -64,8 +69,9 @@ double rb_color_red(VALUE self) {
 }
 void rb_color_set_red(VALUE self, double newval) {
   struct Color *ptr = rb_color_data_mut(self);
-  // Note: original RGSS wrongly saturates RGB within [-255, 255].
-  ptr->red = saturateDouble(newval, 0.0, 255.0);
+  // Note: RGB values are expected to be clamped within [0, 255].
+  // but original RGSS wrongly uses [-255, 255].
+  ptr->red = saturateDouble(newval, -255.0, 255.0);
 }
 double rb_color_green(VALUE self) {
   const struct Color *ptr = rb_color_data(self);
@@ -73,8 +79,9 @@ double rb_color_green(VALUE self) {
 }
 void rb_color_set_green(VALUE self, double newval) {
   struct Color *ptr = rb_color_data_mut(self);
-  // Note: original RGSS wrongly saturates RGB within [-255, 255].
-  ptr->green = saturateDouble(newval, 0.0, 255.0);
+  // Note: RGB values are expected to be clamped within [0, 255].
+  // but original RGSS wrongly uses [-255, 255].
+  ptr->green = saturateDouble(newval, -255.0, 255.0);
 }
 double rb_color_blue(VALUE self) {
   const struct Color *ptr = rb_color_data(self);
@@ -82,8 +89,9 @@ double rb_color_blue(VALUE self) {
 }
 void rb_color_set_blue(VALUE self, double newval) {
   struct Color *ptr = rb_color_data_mut(self);
-  // Note: original RGSS wrongly saturates RGB within [-255, 255].
-  ptr->blue = saturateDouble(newval, 0.0, 255.0);
+  // Note: RGB values are expected to be clamped within [0, 255].
+  // but original RGSS wrongly uses [-255, 255].
+  ptr->blue = saturateDouble(newval, -255.0, 255.0);
 }
 double rb_color_alpha(VALUE self) {
   const struct Color *ptr = rb_color_data(self);
@@ -127,6 +135,8 @@ void Init_Color(void) {
   rb_define_private_method(rb_cColor, "initialize_copy",
       rb_color_m_initialize_copy, 1);
   rb_define_method(rb_cColor, "==", rb_color_m_equal, 1);
+  rb_define_method(rb_cColor, "===", rb_color_m_equal, 1);
+  rb_define_method(rb_cColor, "eql?", rb_color_m_equal, 1);
   rb_define_method(rb_cColor, "set", rb_color_m_set, -1);
   rb_define_method(rb_cColor, "red", rb_color_m_red, 0);
   rb_define_method(rb_cColor, "red=", rb_color_m_set_red, 1);
@@ -224,6 +234,9 @@ static VALUE rb_color_m_initialize(int argc, VALUE *argv, VALUE self) {
 }
 
 static VALUE rb_color_m_initialize_copy(VALUE self, VALUE orig) {
+  if (TYPE(self) != TYPE(orig) || rb_obj_class(self) != rb_obj_class(orig)) {
+    rb_raise(rb_eTypeError, "wrong argument class");
+  }
   rb_color_set2(self, orig);
   return Qnil;
 }
@@ -235,7 +248,12 @@ static VALUE rb_color_m_initialize_copy(VALUE self, VALUE orig) {
  * Compares it to another color.
  */
 static VALUE rb_color_m_equal(VALUE self, VALUE other) {
+#if RGSS == 3
   if(!rb_color_data_p(other)) return Qfalse;
+#else
+  // RGSS <= 2 fails comparison when different objects are given.
+  rb_color_data(other);
+#endif
   return rb_color_equal(self, other) ? Qtrue : Qfalse;
 }
 
@@ -271,6 +289,10 @@ static VALUE rb_color_m_set(int argc, VALUE *argv, VALUE self) {
           NUM2DBL(argv[3]));
       break;
 #if RGSS == 3
+    case 0:
+      // Undocumented, but implemented in RGSS.
+      rb_color_set(self, 0.0, 0.0, 0.0, 0.0);
+      break;
     case 1:
       rb_color_set2(self, argv[0]);
       break;
@@ -279,7 +301,7 @@ static VALUE rb_color_m_set(int argc, VALUE *argv, VALUE self) {
       // Note: original RGSS has wrong messages.
 #if RGSS == 3
       rb_raise(rb_eArgError,
-          "wrong number of arguments (%d for 1, 3..4)", argc);
+          "wrong number of arguments (%d for 0..1, 3..4)", argc);
 #else
       rb_raise(rb_eArgError,
           "wrong number of arguments (%d for 3..4)", argc);
@@ -407,11 +429,15 @@ static VALUE rb_color_s_old_load(VALUE klass, VALUE str) {
     rb_raise(rb_eArgError, "Corrupted marshal data for Color.");
   }
   if(!s) return ret;
-  // Note: original RGSS doesn't check saturation here.
-  ptr->red = saturateDouble(readDouble(s+sizeof(double)*0), 0.0, 255.0);
-  ptr->green = saturateDouble(readDouble(s+sizeof(double)*1), 0.0, 255.0);
-  ptr->blue = saturateDouble(readDouble(s+sizeof(double)*2), 0.0, 255.0);
-  ptr->alpha = saturateDouble(readDouble(s+sizeof(double)*3), 0.0, 255.0);
+  // Note: values should be clamped, but not in the original RGSS.
+  ptr->red = readDouble(s+sizeof(double)*0);
+  ptr->green = readDouble(s+sizeof(double)*1);
+  ptr->blue = readDouble(s+sizeof(double)*2);
+  ptr->alpha = readDouble(s+sizeof(double)*3);
+  // ptr->red = saturateDouble(readDouble(s+sizeof(double)*0), 0.0, 255.0);
+  // ptr->green = saturateDouble(readDouble(s+sizeof(double)*1), 0.0, 255.0);
+  // ptr->blue = saturateDouble(readDouble(s+sizeof(double)*2), 0.0, 255.0);
+  // ptr->alpha = saturateDouble(readDouble(s+sizeof(double)*3), 0.0, 255.0);
   return ret;
 }
 

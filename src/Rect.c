@@ -10,6 +10,10 @@
 #include "Rect.h"
 #include "misc.h"
 
+// Emulation of INT2FIX in x86-32.
+#define INT2FIX_E(x) \
+  INT2NUM((int32_t)(((uint32_t)(x) + 0x40000000U) & 0x7FFFFFFFU) - 0x40000000)
+
 static void rect_mark(struct Rect *ptr);
 static VALUE rect_alloc(VALUE klass);
 
@@ -123,6 +127,8 @@ void Init_Rect() {
   rb_define_private_method(rb_cRect, "initialize_copy",
       rb_rect_m_initialize_copy, 1);
   rb_define_method(rb_cRect, "==", rb_rect_m_equal, 1);
+  rb_define_method(rb_cRect, "===", rb_rect_m_equal, 1);
+  rb_define_method(rb_cRect, "eql?", rb_rect_m_equal, 1);
   rb_define_method(rb_cRect, "set", rb_rect_m_set, -1);
   rb_define_method(rb_cRect, "empty", rb_rect_m_empty, 0);
   rb_define_method(rb_cRect, "x", rb_rect_m_x, 0);
@@ -205,6 +211,9 @@ static VALUE rb_rect_m_initialize(int argc, VALUE *argv, VALUE self) {
 }
 
 static VALUE rb_rect_m_initialize_copy(VALUE self, VALUE orig) {
+  if (TYPE(self) != TYPE(orig) || rb_obj_class(self) != rb_obj_class(orig)) {
+    rb_raise(rb_eTypeError, "wrong argument class");
+  }
   rb_rect_set2(self, orig);
   return Qnil;
 }
@@ -216,7 +225,12 @@ static VALUE rb_rect_m_initialize_copy(VALUE self, VALUE orig) {
  * Compares it to another rectangle.
  */
 static VALUE rb_rect_m_equal(VALUE self, VALUE other) {
+#if RGSS == 3
   if(!rb_rect_data_p(other)) return Qfalse;
+#else
+  // RGSS <= 2 fails comparison when different objects are given.
+  rb_rect_data(other);
+#endif
   return rb_rect_equal(self, other) ? Qtrue : Qfalse;
 }
 
@@ -271,7 +285,8 @@ static VALUE rb_rect_m_empty(VALUE self) {
  * Returns the x value of the rectangle.
  */
 static VALUE rb_rect_m_x(VALUE self) {
-  return INT2NUM(rb_rect_x(self));
+  // Note: RGSS wrongly wraps it with 31bit.
+  return INT2FIX_E(rb_rect_x(self));
 }
 
 /*
@@ -292,7 +307,8 @@ static VALUE rb_rect_m_set_x(VALUE self, VALUE newval) {
  * Returns the y value of the rectangle.
  */
 static VALUE rb_rect_m_y(VALUE self) {
-  return INT2NUM(rb_rect_y(self));
+  // Note: RGSS wrongly wraps it with 31bit.
+  return INT2FIX_E(rb_rect_y(self));
 }
 
 /*
@@ -313,7 +329,8 @@ static VALUE rb_rect_m_set_y(VALUE self, VALUE newval) {
  * Returns the width value of the rectangle.
  */
 static VALUE rb_rect_m_width(VALUE self) {
-  return INT2NUM(rb_rect_width(self));
+  // Note: RGSS wrongly wraps it with 31bit.
+  return INT2FIX_E(rb_rect_width(self));
 }
 
 /*
@@ -334,7 +351,8 @@ static VALUE rb_rect_m_set_width(VALUE self, VALUE newval) {
  * Returns the height value of the rectangle.
  */
 static VALUE rb_rect_m_height(VALUE self) {
-  return INT2NUM(rb_rect_height(self));
+  // Note: RGSS wrongly wraps it with 31bit.
+  return INT2FIX_E(rb_rect_height(self));
 }
 
 /*
@@ -356,7 +374,7 @@ static VALUE rb_rect_m_set_height(VALUE self, VALUE newval) {
  */
 static VALUE rb_rect_m_to_s(VALUE self) {
   const struct Rect *ptr = rb_rect_data(self);
-  char s[50];
+  char s[60];
   snprintf(s, sizeof(s), "(%d, %d, %d, %d)",
       ptr->x, ptr->y, ptr->width, ptr->height);
   return rb_str_new2(s);

@@ -17,6 +17,7 @@
 #include "openres.h"
 #include "misc.h"
 #include "sdl_misc.h"
+#include "surface_misc.h"
 
 static void bitmap_mark(struct Bitmap *ptr);
 static void bitmap_free(struct Bitmap *ptr);
@@ -78,10 +79,8 @@ void bitmapBindTexture(struct Bitmap *ptr) {
   }
   glBindTexture(GL_TEXTURE_2D, ptr->texture_id);
   if(ptr->texture_invalidated) {
-    SDL_LockSurface(ptr->surface);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ptr->surface->w, ptr->surface->h,
         0, GL_RGBA, GL_UNSIGNED_BYTE, ptr->surface->pixels);
-    SDL_UnlockSurface(ptr->surface);
     ptr->texture_invalidated = false;
   }
 }
@@ -279,13 +278,12 @@ static void blt(
     SDL_Surface *dst, SDL_Surface *src,
     int dst_x, int dst_y, int dst_w, int dst_h,
     int src_x, int src_y, int src_w, int src_h, int opacity) {
-  SDL_LockSurface(dst);
-  SDL_LockSurface(src);
-
   Uint32 *src_pixels = src->pixels;
   int src_pitch = src->pitch / 4;
   Uint32 *dst_pixels = dst->pixels;
   int dst_pitch = dst->pitch / 4;
+
+  if(dst_w == 0 || dst_h == 0) return;
 
   int ratio_x = 256 * src_w / dst_w;
   int ratio_y = 256 * src_h / dst_h;
@@ -306,25 +304,14 @@ static void blt(
       }
       Uint32 src_rgba = src_pixels[sy * src_pitch + sx];
       Uint32 dst_rgba = dst_pixels[dy * dst_pitch + dx];
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-      Uint32 src_r = (src_rgba >> 24) & 0xff;
-      Uint32 src_g = (src_rgba >> 16) & 0xff;
-      Uint32 src_b = (src_rgba >> 8) & 0xff;
-      Uint32 src_a = src_rgba & 0xff;
-      Uint32 dst_r = (dst_rgba >> 24) & 0xff;
-      Uint32 dst_g = (dst_rgba >> 16) & 0xff;
-      Uint32 dst_b = (dst_rgba >> 8) & 0xff;
-      Uint32 dst_a = dst_rgba & 0xff;
-#else
-      Uint32 src_r = src_rgba & 0xff;
-      Uint32 src_g = (src_rgba >> 8) & 0xff;
-      Uint32 src_b = (src_rgba >> 16) & 0xff;
-      Uint32 src_a = (src_rgba >> 24) & 0xff;
-      Uint32 dst_r = dst_rgba & 0xff;
-      Uint32 dst_g = (dst_rgba >> 8) & 0xff;
-      Uint32 dst_b = (dst_rgba >> 16) & 0xff;
-      Uint32 dst_a = (dst_rgba >> 24) & 0xff;
-#endif
+      Uint32 src_r = RGBA32_R(src_rgba);
+      Uint32 src_g = RGBA32_G(src_rgba);
+      Uint32 src_b = RGBA32_B(src_rgba);
+      Uint32 src_a = RGBA32_A(src_rgba);
+      Uint32 dst_r = RGBA32_R(dst_rgba);
+      Uint32 dst_g = RGBA32_G(dst_rgba);
+      Uint32 dst_b = RGBA32_B(dst_rgba);
+      Uint32 dst_a = RGBA32_A(dst_rgba);
 
       src_a = (src_a * opacity * 2 + 255) / (255 * 2);
       Uint32 denom = 255 * src_a + (255 - src_a) * dst_a;
@@ -341,17 +328,10 @@ static void blt(
       Uint32 new_r = (dst_r * dst_o + src_r * src_o) / 256;
       Uint32 new_g = (dst_g * dst_o + src_g * src_o) / 256;
       Uint32 new_b = (dst_b * dst_o + src_b * src_o) / 256;
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-      Uint32 new_rgba = (new_r << 24) | (new_g << 16) | (new_b << 8) | new_a;
-#else
-      Uint32 new_rgba = new_r | (new_g << 8) | (new_b << 16) | (new_a << 24);
-#endif
+      Uint32 new_rgba = RGBA32(new_r, new_g, new_b, new_a);
       dst_pixels[dy * dst_pitch + dx] = new_rgba;
     }
   }
-
-  SDL_UnlockSurface(src);
-  SDL_UnlockSurface(dst);
 }
 
 static VALUE rb_bitmap_m_blt(int argc, VALUE *argv, VALUE self) {
@@ -432,11 +412,7 @@ static VALUE rb_bitmap_m_fill_rect(int argc, VALUE *argv, VALUE self) {
   Uint32 green = (Uint8)color_ptr->green;
   Uint32 blue = (Uint8)color_ptr->blue;
   Uint32 alpha = (Uint8)color_ptr->alpha;
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-  Uint32 color = (red << 24) | (green << 16) | (blue << 8) | alpha;
-#else
-  Uint32 color = red | (green << 8) | (blue << 16) | (alpha << 24);
-#endif
+  Uint32 color = RGBA32(red, green, blue, alpha);
   SDL_FillRect(ptr->surface, &sdl_rect, color);
   return Qnil;
 }
@@ -500,11 +476,7 @@ static VALUE rb_bitmap_m_gradient_fill_rect(
       Uint32 green = green1 + (int)(green2 - green1) * i / l;
       Uint32 blue = blue1 + (int)(blue2 - blue1) * i / l;
       Uint32 alpha = alpha1 + (int)(alpha2 - alpha1) * i / l;
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-      Uint32 color = (red << 24) | (green << 16) | (blue << 8) | alpha;
-#else
-      Uint32 color = red | (green << 8) | (blue << 16) | (alpha << 24);
-#endif
+      Uint32 color = RGBA32(red, green, blue, alpha);
       pixels[y * pitch + x] = color;
     }
   }
@@ -555,12 +527,10 @@ static VALUE rb_bitmap_m_get_pixel(VALUE self, VALUE x, VALUE y) {
   if(!(0 <= xi && xi < ptr->surface->w && 0 <= yi && yi < ptr->surface->h)) {
     return rb_color_new2();
   }
-  SDL_LockSurface(ptr->surface);
   Uint8 *pixel =
     (Uint8*)ptr->surface->pixels + yi * ptr->surface->pitch + xi * 4;
   VALUE color = rb_color_new(
     pixel[0], pixel[1], pixel[2], pixel[3]);
-  SDL_UnlockSurface(ptr->surface);
   return color;
 }
 
@@ -574,36 +544,201 @@ static VALUE rb_bitmap_m_set_pixel(VALUE self, VALUE x, VALUE y, VALUE color) {
   if(!(0 <= xi && xi < ptr->surface->w && 0 <= yi && yi < ptr->surface->h)) {
     return Qnil;
   }
-  SDL_LockSurface(ptr->surface);
   Uint8 *pixel =
     (Uint8*)ptr->surface->pixels + yi * ptr->surface->pitch + xi * 4;
   pixel[0] = color_ptr->red;
   pixel[1] = color_ptr->green;
   pixel[2] = color_ptr->blue;
   pixel[3] = color_ptr->alpha;
-  SDL_UnlockSurface(ptr->surface);
   return Qnil;
 }
 
 static VALUE rb_bitmap_m_hue_change(VALUE self, VALUE hue) {
-  (void) self;
-  (void) hue;
-  WARN_UNIMPLEMENTED("Bitmap#hue_change");
+  struct Bitmap *ptr = rb_bitmap_data_mut(self);
+  if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
+  ptr->texture_invalidated = true;
+  SDL_Surface *surface = ptr->surface;
+  int w = surface->w;
+  int h = surface->h;
+  int pitch = surface->pitch / 4;
+  Uint32 *pixels = surface->pixels;
+  int hue_i = NUM2INT(hue);
+
+  if(hue_i == 0) return Qnil;
+
+  for(int y = 0; y < h; ++y) {
+    for(int x = 0; x < w; ++x) {
+      Uint32 rgba = pixels[y * pitch + x];
+      int r = RGBA32_R(rgba);
+      int g = RGBA32_G(rgba);
+      int b = RGBA32_B(rgba);
+      int a = RGBA32_A(rgba);
+      int minval = r;
+      if(minval > g) minval = g;
+      if(minval > b) minval = b;
+      int maxval = r;
+      if(maxval < g) maxval = g;
+      if(maxval < b) maxval = b;
+      int dif = maxval - minval;
+      if(dif == 0) continue;
+      int hue2;
+      if(maxval == r) {
+        hue2 = (g - b) * 60 / dif;
+        if(hue2 < 0) hue2 += 360;
+      } else if(maxval == g) {
+        hue2 = (b - r) * 60 / dif + 120;
+      } else {
+        hue2 = (r - g) * 60 / dif + 240;
+      }
+
+      hue2 = (hue2 + hue_i) % 360;
+      if(hue2 < 0) hue2 += 360;
+
+      if(hue2 < 60) {
+        // r > g > b
+        r = maxval;
+        g = minval + dif * hue2 / 60;
+        b = minval;
+      } else if(hue2 < 120) {
+        // g > r > b
+        r = minval + dif * (120 - hue2) / 60;
+        g = maxval;
+        b = minval;
+      } else if(hue2 < 180) {
+        // g > b > r
+        r = minval;
+        g = maxval;
+        b = minval + dif * (hue2 - 120) / 60;
+      } else if(hue2 < 240) {
+        // b > g > r
+        r = minval;
+        g = minval + dif * (240 - hue2) / 60;
+        b = maxval;
+      } else if(hue2 < 300) {
+        // b > r > g
+        r = minval + dif * (hue2 - 240) / 60;
+        g = minval;
+        b = maxval;
+      } else {
+        // r > b > g
+        r = maxval;
+        g = minval;
+        b = minval + dif * (360 - hue2) / 60;
+      }
+
+      rgba = RGBA32(r, g, b, a);
+      pixels[y * pitch + x] = rgba;
+    }
+  }
   return Qnil;
 }
 
 #if RGSS >= 2
 static VALUE rb_bitmap_m_blur(VALUE self) {
-  (void) self;
-  WARN_UNIMPLEMENTED("Bitmap#blur");
+  struct Bitmap *ptr = rb_bitmap_data_mut(self);
+  if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
+  ptr->texture_invalidated = true;
+
+  SDL_Surface *orig = ptr->surface;
+  int w = orig->w;
+  int h = orig->h;
+  int orig_pitch = orig->pitch / 4;
+  SDL_Surface *dest = create_rgba_surface(w, h);
+  int dest_pitch = dest->pitch / 4;
+
+  Uint32 *orig_pixels = orig->pixels;
+  Uint32 *dest_pixels = dest->pixels;
+  for(int y = 0; y < h; ++y) {
+    for(int x = 0; x < w; ++x) {
+      int sum_r = 0, sum_g = 0, sum_b = 0, sum_a = 0;
+      for(int yp = -1; yp <= 1; ++yp) {
+        for(int xp = -1; xp <= 1; ++xp) {
+          int ys = y + yp;
+          int xs = x + xp;
+          ys = ys < 0 ? 0 : ys >= h ? h-1 : ys;
+          xs = xs < 0 ? 0 : xs >= w ? w-1 : xs;
+          Uint32 src_rgba = orig_pixels[ys * orig_pitch + xs];
+          sum_r += RGBA32_R(src_rgba);
+          sum_g += RGBA32_G(src_rgba);
+          sum_b += RGBA32_B(src_rgba);
+          sum_a += RGBA32_A(src_rgba);
+        }
+      }
+      int red = sum_r / 9;
+      int green = sum_g / 9;
+      int blue = sum_b / 9;
+      int alpha = sum_a / 9;
+      Uint32 color = RGBA32(red, green, blue, alpha);
+      dest_pixels[y * dest_pitch + x] = color;
+    }
+  }
+
+  ptr->surface = dest;
+  SDL_FreeSurface(orig);
   return Qnil;
 }
 
 static VALUE rb_bitmap_m_radial_blur(VALUE self, VALUE angle, VALUE division) {
-  (void) self;
-  (void) angle;
-  (void) division;
-  WARN_UNIMPLEMENTED("Bitmap#radial_blur");
+  struct Bitmap *ptr = rb_bitmap_data_mut(self);
+  if(!ptr->surface) rb_raise(rb_eRGSSError, "disposed bitmap");
+  ptr->texture_invalidated = true;
+
+  int angle_i = NUM2INT(angle);
+  double angle_rad = angle_i * (3.1415926535897932384 / 180.0);
+  int division_i = NUM2INT(division);
+  if(division_i < 2) return Qnil;
+
+  SDL_Surface *orig = ptr->surface;
+  int w = orig->w;
+  int h = orig->h;
+  int orig_pitch = orig->pitch / 4;
+  SDL_Surface *dest = create_rgba_surface(w, h);
+  int dest_pitch = dest->pitch / 4;
+
+  Uint32 *orig_pixels = orig->pixels;
+  Uint32 *dest_pixels = dest->pixels;
+
+  double *sins = malloc(sizeof(*sins) * division);
+  double *coss = malloc(sizeof(*coss) * division);
+  for(int i = 0; i < division_i; ++i) {
+    double theta = angle_rad * ((double)i / (division_i - 1) - 0.5);
+    sins[i] = sin(theta);
+    coss[i] = cos(theta);
+  }
+  double centerx = (w - 1) * 0.5;
+  double centery = (h - 1) * 0.5;
+
+  for(int y = 0; y < h; ++y) {
+    for(int x = 0; x < w; ++x) {
+      int sum_r = 0, sum_g = 0, sum_b = 0, sum_a = 0;
+      for(int i = 0; i < division_i; ++i) {
+        int xrel = x - centerx;
+        int yrel = y - centery;
+        int xs = xrel * coss[i] - yrel * sins[i] + centerx + 0.5;
+        int ys = xrel * sins[i] + yrel * coss[i] + centery + 0.5;
+        ys = ys < 0 ? -ys : ys >= h ? h*2-1-ys : ys;
+        xs = xs < 0 ? -xs : xs >= w ? w*2-1-xs : xs;
+        ys = ys < 0 ? 0 : ys >= h ? h-1 : ys;
+        xs = xs < 0 ? 0 : xs >= w ? w-1 : xs;
+        Uint32 src_rgba = orig_pixels[ys * orig_pitch + xs];
+        sum_r += RGBA32_R(src_rgba);
+        sum_g += RGBA32_G(src_rgba);
+        sum_b += RGBA32_B(src_rgba);
+        sum_a += RGBA32_A(src_rgba);
+      }
+      int red = sum_r / division_i;
+      int green = sum_g / division_i;
+      int blue = sum_b / division_i;
+      int alpha = sum_a / division_i;
+      Uint32 color = RGBA32(red, green, blue, alpha);
+      dest_pixels[y * dest_pitch + x] = color;
+    }
+  }
+  free(sins);
+  free(coss);
+
+  ptr->surface = dest;
+  SDL_FreeSurface(orig);
   return Qnil;
 }
 #endif
